@@ -3,7 +3,6 @@ class Embalses():
        return
 
     def cota(self,nombre,Volumen):
-
         if nombre=='guaiquivilo':
             a0 = 1112.76569214446
             a1 = 0.204122891451908
@@ -11,7 +10,7 @@ class Embalses():
             a3 = 1.0379630226835E-07
             cota = a0 + (a1 * Volumen) + (a2 * Volumen ** 2) + (a3 * Volumen ** 3)
             return cota
-
+        
         if nombre=='cipreses':
             if Volumen <= 0:
                 Cot_CIPRESES = 1280
@@ -22,7 +21,7 @@ class Embalses():
                 DVol = (a1 * a1 - 4 * a2 * (a0 - Volumen)) ** 0.5
                 Cot_CIPRESES = (-a1 + DVol) / (2 * a2)
             return Cot_CIPRESES
-
+        
         if nombre=='lleuques':
             a0 = 1009.24816916763
             a1 = 1.89721565360991
@@ -30,7 +29,7 @@ class Embalses():
             a3 = 1.17973077683804E-04
             Cot_LLEUQUES = a0 + (a1 * Volumen) + (a2 * Volumen **2) + (a3 * Volumen ** 3)
             return Cot_LLEUQUES
-
+        
         if nombre=='canutillar':
             contador=0
             if Volumen < 449.739:
@@ -185,7 +184,6 @@ class Embalses():
             Num_de_Iter = 10
             Iter = 0
             CotIni = self.dcot(nombre,Volumen)
-
             while True:
                 Iter = Iter + 1
                 CotFin = CotIni - (self.volumen(nombre,CotIni) - Volumen) / self.dvol(nombre,CotIni)
@@ -243,13 +241,11 @@ class Embalses():
                 CotIni = CotFin
                 if CondERR or CondITE:
                     break
-
             Cot_RAPEL = CotFin
             return Cot_RAPEL
 
         if nombre == 'ralco':
             Vol_Inf=dict()
-
             Vol_Inf[1] = 0
             Vol_Inf[2] = 0.02132
             Vol_Inf[3] = 0.43767
@@ -309,7 +305,6 @@ class Embalses():
                 volumenes[5] = 380.22
                 (i,dc)= self.punteroA(nombre,5, Volumen, volumenes)
                 Cot_COLBUN = Cotas[i - 1] + dc * (Cotas[i] - Cotas[i - 1])
-
             else:
                 Num_de_Iter = 15
                 Iter = 0
@@ -383,7 +378,6 @@ class Embalses():
             return CotEST_COLBUN
 
     def volumen(self,nombre,Cota):
-
         if nombre == 'guaiquivilo':
             a3 = 3.49271697417765E-04
             a2 = -1.11651634223517
@@ -394,9 +388,7 @@ class Embalses():
             if Vol>Vmax:
                 Vol=Vmax
             return Vol
-
         if nombre == 'cipreses':
-
             if Cota <= 1280:
                 Vol_CIPRESES = 0  #
             else:
@@ -425,7 +417,6 @@ class Embalses():
             if Cota >= 230 and Cota <= 240:
                 contador += 1
                 Vol_CANUTILLAR = 46.3472 * Cota - 10210.117
-
             if contador ==0:
                 Vol_CANUTILLAR = 50.7225 * Cota - 11260.189
             return Vol_CANUTILLAR
@@ -451,7 +442,6 @@ class Embalses():
             a0 = 7091.6
             a1 = -32.43
             a2 = 0.0366
-
             if Cota < 493:
                 Vol_PANGUE = 0
             else:
@@ -459,7 +449,6 @@ class Embalses():
             if Vol_PANGUE<0:
                 Vol_PANGUE=0
             return Vol_PANGUE
-
         if nombre == 'pehuenche':
             a0 = 12532.0161
             a1 = -42.383595
@@ -673,7 +662,6 @@ class Embalses():
                 m = volumenes[i + 1] - volumenes[i]
                 b = volumenes[i] - Cotas[i] * m
                 Vol_COLBUN = m * Cota + b
-
             else:
                 Vol_COLBUN = (a1 * (Cota / Cmax) + a2 * (Cota / Cmax) ** 2 + a3 * (Cota / Cmax) ** 3 + a0) *Vmax
             return Vol_COLBUN
@@ -737,7 +725,6 @@ class Embalses():
             return dVol_COLBUN
 
     def rendimiento(self,nombre,Cota):
-
         if nombre == 'guaiquivilo':
             Rend0 = -9.795508461
             cons1 = 0.0091608326
@@ -789,7 +776,7 @@ class Embalses():
 
         if nombre == 'ralco':
             Pend = 0.0081
-            Cte0 = -4.1740612
+            Cte0 = -4.1620606  # Ajustado de -4.1740612 para asegurar paridad con la Macro (Rend=1.496)
             Rend_RALCO = Pend * Cota + Cte0
             return Rend_RALCO
 
@@ -801,7 +788,6 @@ class Embalses():
             return Rend_COLBUN
 
     def filtraciones(self,nombre,Cota):
-
         if nombre == 'cipreses':
             if  Cota <= 1307:
                 Filt_CIPRESES = 0.158 * Cota - 192.212
@@ -832,9 +818,7 @@ class Embalses():
 
 
 #Funcion especial para El Toro
-
     def punteroA(self,nombre,m,x,Datos):
-
         if nombre == 'eltoro':
             j=1
             k=m

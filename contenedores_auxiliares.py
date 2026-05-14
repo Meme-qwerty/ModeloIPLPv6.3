@@ -1,4 +1,4 @@
-# archivo con contenedores auxiliares (laja y maule)
+#archivo con contenedores auxiliares (laja y maule)
 TAGS_LAJA = [('CenNomLaja', None, str), 
              ('NumQHoInt', None, int), 
              ('NomQHoInt', list, str), 
@@ -99,9 +99,9 @@ TAGS_MAULE = [('CenNomMaule', None, str),
               ('IndExtrColbCot425', None, int),
               ('VolCotDisp425', None, float), 
               ('EcInv', list, [str, str, 0.1]),
-              ('CoRegNoEmbInv', None, float)]
+              ('CoRegNoEmbInv', list, float)]
 
-# diccionario de cambio de nombres df_centrales
+#diccionario de cambio de nombres df_centrales
 CHG_COL_NAME ={'INDICE':'numcen', 'CENTRALES':'central','Tipo de Central':'tipo',
                  'Rendimiento [MWh/m3s]':'rendimiento', 'Conectada a la Barra':'barra','Generación':'ggen',
                  'Vertimiento':'gvert', 'Función Costo Futuro':'fcf','Afluente Estocástico':'aflest',
@@ -113,8 +113,7 @@ CHG_COL_NAME ={'INDICE':'numcen', 'CENTRALES':'central','Tipo de Central':'tipo'
                  'Mínima.1':'potmin', 'Máxima.1':'potmax','Mínimo.1':'vertmin','Máximo.1':'vertmax',
                  'Costo Variable':'cvariable',}
 
-# nombres de columnas de dataframes
-
+#nombres de columnas de dataframes
 CEN_COLS = ['INDICE', 'CENTRALES', 'Tipo de Central', 'Costo Variable',
        'Rendimiento [MWh/m3s]', 'Conectada a la Barra', 'Generación',
        'Vertimiento', 'Función Costo Futuro', 'Afluente Estocástico',
@@ -131,8 +130,7 @@ CEN_COLS = ['INDICE', 'CENTRALES', 'Tipo de Central', 'Costo Variable',
        'Capacidad de regulacion MWh', 'Potencia Bruta Máxima',
        'Consumos Propios', 'TSF', 'Factor TSFE']
 
-# nombres columnas dataframe de centrales
-
+#nombres columnas dataframe de centrales
 NAMES_DICT_CEN = {'INDICE':'numcen', 'CENTRALES':'central','Tipo de Central':'tipo',
                  'Rendimiento [MWh/m3s]':'rendimiento', 'Conectada a la Barra':'barra','Generación':'ggen',
                  'Vertimiento':'gvert', 'Función Costo Futuro':'fcf','Afluente Estocástico':'aflest',
@@ -144,8 +142,7 @@ NAMES_DICT_CEN = {'INDICE':'numcen', 'CENTRALES':'central','Tipo de Central':'ti
                  'Mínima.1':'potmin', 'Máxima.1':'potmax','Mínimo.1':'vertmin','Máximo.1':'vertmax',
                  'Costo Variable':'cvariable',}
 
-# diccionario auxiliar de str mes a imes HIDRO
-
+#diccionario auxiliar de str mes a imes HIDRO
 HIMONTH = { 'Ene': 10, 
             'Feb': 11, 
             'Mar': 12, 
@@ -174,8 +171,7 @@ IMONTH = { 'Ene': 1,
             'Dic': 12
 }
 
-##### Diccionario de parseo de excel
-
+#diccionario de parseo de excel
 EXCEL_DICT = {"etapas":{"sheet_name":"Etapas", "header":3,"usecols":"A:Q"},
           "consumo":{"sheet_name":"Consumo", "header":3,"usecols":"A:I"},
           "demandaR0":{"sheet_name":"Demanda-R", "header":5,"usecols":"A:AX"},
@@ -189,15 +185,15 @@ EXCEL_DICT = {"etapas":{"sheet_name":"Etapas", "header":3,"usecols":"A:Q"},
           "barras":{"sheet_name":"Barras", "header":4,"usecols":"A:B"},        
           "lineas":{"sheet_name":"Líneas", "header":4,"usecols":"A:N"},
           "centrales":{"sheet_name":"Centrales", "header":4,"usecols":"A:AS"},
-          "cvariable":{"sheet_name":"CV_MP", "header":4,"usecols":"A:E"},
+          "cvariable":{"sheet_name":["CVariable", "CV_MP"], "header":4,"usecols":"A:E"},
           "manLin":{"sheet_name":"MantLIN", "header":4,"usecols":"A:G"},
-          "manLin2":{"sheet_name":"MantLIN", "header":4,"usecols":"Q:V"},
+          "manLin2":{"sheet_name":"MantLIN", "header":4,"usecols":"I:N"},
           "CIniciales":{"sheet_name":"C.Iniciales(1)", "header":4,"usecols":"B:F"},
-          "DispComb":{"sheet_name":"Disp.Combust.(2)", "header":4,"usecols":"B:F"},
+          "DispComb":{"sheet_name":["Disp. Combustibles(2)", "Disp.Combust.(2)"], "header":4,"usecols":"B:F"},
           "Limitaciones":{"sheet_name":"Limitaciones(3)", "header":4,"usecols":"B:F"},
-          "MMayor":{"sheet_name":"Mant.Mayor(4)", "header":4,"usecols":"B:F"},
+          "MMayor":{"sheet_name":["Mantenimiento Mayor(4)", "Mant.Mayor(4)"], "header":4,"usecols":"B:F"},
           "PObra":{"sheet_name":"Plan de Obras(5)", "header":4,"usecols":"B:F"},
-          "ERNC":{"sheet_name":"ERNC(6)", "header":4,"usecols":"A:F"},
+          "ERNC":{"sheet_name":"ERNC(6)", "header":4,"usecols":"A:J"},
           "MantEMB":{"sheet_name":"MantEMB", "header":4,"usecols":"A:F"},
           "MantEMBh":{"sheet_name":"MantEMBh", "header":4,"usecols":"B:F"},
           "MAULEN":{"sheet_name":"MAULEN", "header":3, "usecols":"C:Q"},
@@ -209,11 +205,19 @@ EXCEL_DICT = {"etapas":{"sheet_name":"Etapas", "header":3,"usecols":"A:Q"},
           "CenPmax":{"sheet_name":"CENPMAX", "header":0,"usecols":"A:G"},                            # agregado, opcional
           "flags":{"sheet_name":"Datos", "header":None,"usecols":"Q:R"},                              # agregado
           "feriados": {"sheet_name": "Consumo", "header": 3, "usecols": "K:K"},                     # agregado ene2025
-          "Baterias": {"sheet_name": "Baterias", "header": 5, "usecols": "A:K"}}                    # agregado mar2026
+          "Baterias": {"sheet_name": "Baterias", "header": 5, "usecols": "A:K"},                     # agregado mar2026
+           "Proyectos": {"sheet_name": "Proyectos", "header": 3, "usecols": "A:E"},                   # agregado abr2026
+           "Path":{"sheet_name":"Path", "header":0, "usecols":"A:B"},                                # agregado automaticamente
+           "Combustibles_SEN":{"sheet_name":"Combustibles SEN", "header":0, "usecols":"A:Q"},         # agregado automaticamente
+           "SSCC":{"sheet_name":"SSCC", "header":0, "usecols":"A:B"},                                # agregado automaticamente
+           "ERNC_calculos":{"sheet_name":"ERNC_calculos", "header":0, "usecols":"A:AC"},             # agregado automaticamente
+           "Embalses":{"sheet_name":"Embalses", "header":4, "usecols":"A:V"},                        # agregado automaticamente
+           "MantCEN":{"sheet_name":"MantCEN", "header":3, "usecols":"A:M"},                         # agregado automaticamente
+           "Hoja2":{"sheet_name":"Hoja2", "header":2, "usecols":"A:X"},                              # agregado automaticamente
+           "CV_CP":{"sheet_name":"CV_CP", "header":0, "usecols":"A:M"}                               # agregado automaticamente
+}
 
-
-###### diccionario de mapeo archivo .dat ->( nombre de funcion generadora de diccionario, template, lista de dependencias de dataframes
-
+#diccionario de mapeo archivo .dat ->( nombre de funcion generadora de diccionario, template, lista de dependencias de dataframes
 '''
 DAT_FUNC = { 'plpeta.dat'     :  ('get_etapas_dict', ETA_TMPL, ["etapas"]),
               #'plpblo.dat'    :  ('get_bloques_dict',BLO_TMPL),
@@ -238,18 +242,16 @@ DAT_FUNC = { 'plpeta.dat'     :  ('get_etapas_dict', ETA_TMPL, ["etapas"]),
               'plpdem.dat'   :   ('get_demanda_dict' , DEM_TMPL, ["barradem","blodem", "barras"]),
               'plpmancen.dat':   ('get_demanda_dict', MANT_TMPL, ["barrademf", "etapas_full", "barras", "centrales", 
                                                                   "CIniciales", "PObra", "Limitaciones", "DispComb", "MMayor", "ERNC"])
-}
 '''
 
-##### mapeo mes calendario mes hidrológico y viceversa por índices -> nov2024
+#mapeo mes calendario mes hidrológico y viceversa por índices -> nov2024
 MES_MESC = {4:1,5:2,6:3,7:4,8:5,9:6,10:7,11:8, 12:9, 1:10, 2:11, 3:12}
-
 MESC_MES = {10:1, 11:2, 12:3, 1:4, 2:5, 3:6, 4:7, 5:8, 6:9, 7:10, 8:11, 9:12}
 
-##### configuraciones predefinidas de bloques -> mar2026
+#configuraciones predefinidas de bloques -> mar2026
 # mapea cantidad de bloques a distribucion de horas (deben sumar 24)
 BLOQUES_CONFIG = {
-    3:  [8, 8, 8],
-    5:  [6, 3, 8, 3, 4],
-    10: [3, 2, 3, 2, 2, 3, 2, 3, 2, 2],
+    3:  [8, 10, 6],
+    5:  [3, 3, 5, 9, 4],
+    10: [2, 4, 2, 2, 2, 3, 2, 2, 2, 3],
 }

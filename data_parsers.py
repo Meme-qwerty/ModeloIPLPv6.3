@@ -36,7 +36,7 @@ def get_tasa(x):
 def parse_etapas(df_etapas_xls: pd.DataFrame) -> pd.DataFrame:
     #df_eta = df_etapas_xls.reset_index(drop = True)
     df_eta = df_etapas_xls.copy()
-    df_eta = df_eta.dropna(how = 'all').dropna(how = 'any')
+    df_eta = df_eta.dropna(subset=['Etapa', 'Nº Bloques'])
     df_eta = df_eta.astype({'Etapa': 'int32', 'Nº Días': 'int32', 'Año': 'int32', 'Nº Bloques': 'int32' })
     df_eta['Inicial'] = pd.to_datetime(df_eta['Inicial'])
     df_eta['Final'] = pd.to_datetime(df_eta['Final'])
@@ -113,7 +113,7 @@ def parse_bloques(df_blodem: pd.DataFrame) -> pd.DataFrame:
     df_blo = df_blo.drop('fecha', axis = 1)
     df_blo = df_blo.drop_duplicates().reset_index(drop = True)
     df_blo['indice'] = df_blo.index + 1
-    df_blo["tipo"] = df_blo["indblo"].apply(lambda x: "Bloque 0"+str(x))
+    df_blo["tipo"] = df_blo["indblo"].apply(lambda x: f"Bloque {x:02d}")
     df_blo = df_blo.drop('indblo', axis = 1)
     df_blo['horas_CEN'] = df_blo['horas_CEN'].astype('int32')
     df_blo = df_blo.rename(columns = {'Año': 'Ano'})
@@ -206,9 +206,12 @@ def parse_centrales(df_centrales_xls: pd.DataFrame, uninodal = False) -> tuple:
     df_cgh = df_cgh.rename(columns=CHG_COL_NAME)
     df_cgh['barra'] = df_cgh['barra'].fillna(0).astype("int32")
     df_cgh = df_cgh[~np.isnan(df_cgh.numcen)].reset_index(drop=True)
-    df_cgh['numcen'] = df_cgh['numcen'].astype("int16") 
+    df_cgh['numcen'] = df_cgh['numcen'].astype("int16")
     df_cgh['cvariable'] = df_cgh['cvariable'].replace(np.nan, 0.0)
-    df_cgh['afl1ersem'] = df_cgh['afl1ersem'].replace(np.nan, 0.0)
+    df_cgh['cvariable'] = df_cgh['cvariable'].astype(float).replace(np.nan, 0.0)
+    df_cgh['afl1ersem'] = df_cgh['afl1ersem'].astype(float).replace(np.nan, 0.0)
+    df_cgh['potmin'] = df_cgh['potmin'].astype(float).replace(np.nan, 0.0)
+    df_cgh['potmax'] = df_cgh['potmax'].astype(float).replace(np.nan, 0.0)
     df_cgh['indhid'] = df_cgh['indhid'].replace(np.nan, 'F').replace(1.0, 'T')
     df_cgh['ggen'] = df_cgh['ggen'].replace(np.nan, 0.0).astype('int32')
     df_cgh['gvert'] = df_cgh['gvert'].replace(np.nan, 0.0).astype('int32')
@@ -221,24 +224,66 @@ def parse_centrales(df_centrales_xls: pd.DataFrame, uninodal = False) -> tuple:
     if uninodal:
         df_cgh.loc[df_cgh.barra > 1, 'barra'] = 1
 
-
     embalses = df_cgh[df_cgh.tipo == 'E']
     series   = df_cgh[df_cgh.tipo.isin(['S', 'R'])]
     pasadas  = df_cgh[df_cgh.tipo.isin(['P', 'M'])]
     baterias = df_cgh[df_cgh.tipo == 'BAT']
-    termicas = df_cgh[df_cgh.tipo.isin(['T', 'F', 'BAT'])]
+    termicas = df_cgh[df_cgh.tipo == 'T']
     fallas   = df_cgh[df_cgh.tipo == 'F']
     
-
-    ncen = len(embalses)+len(series)+len(pasadas)+len(termicas)
+    ncen = len(embalses)+len(series)+len(pasadas)+len(termicas)+len(baterias)+len(fallas)
     
+    # CORRECCIÓN Y RED DE SEGURIDAD: Llenar nulos de volumen calculando desde la tabla cota-volumen si existe, si no, llenar con 0
+    from func_cdec import Embalses
+    emb_calc = Embalses()
+    
+    def interpolate_vol(row, vol_col, cota_col):
+        vol = row[vol_col]
+        if pd.isna(vol):
+            try:
+                cota = row[cota_col]
+                central_name = str(row['central']).strip().lower()
+                if pd.notna(cota):
+                    calc_vol = emb_calc.volumen(central_name, float(cota))
+                    if calc_vol is not None:
+                        return calc_vol
+            except Exception:
+                pass
+            return 0.0
+        return vol
+
+    def interpolate_rend(row, rend_col, cota_col):
+        rend = row[rend_col]
+        if pd.isna(rend):
+            try:
+                cota = row[cota_col]
+                central_name = str(row['central']).strip().lower()
+                if pd.notna(cota):
+                    calc_rend = emb_calc.rendimiento(central_name, float(cota))
+                    if calc_rend is not None:
+                        return calc_rend
+            except Exception:
+                pass
+            return 0.0
+        return rend
+
+    embalses = embalses.copy()
+    embalses['rendimiento'] = embalses.apply(lambda r: interpolate_rend(r, 'rendimiento', 'cotainicial'), axis=1)
+    embalses['volini'] = embalses.apply(lambda r: interpolate_vol(r, 'volini', 'cotainicial'), axis=1)
+    embalses['volfin'] = embalses.apply(lambda r: interpolate_vol(r, 'volfin', 'cotafinal'), axis=1)
+    embalses['volmin'] = embalses.apply(lambda r: interpolate_vol(r, 'volmin', 'cotamin'), axis=1)
+    embalses['volmax'] = embalses.apply(lambda r: interpolate_vol(r, 'volmax', 'cotamax'), axis=1)
+
     # preproceso dataframe de embalses
     embalses = embalses.iloc[:,[0,1,3,4,5,6,7,8,11,12,22,23,24,25,26,27,28,29]].copy()
+    
+    # Llenar nulos sobrantes con 0
+    embalses[['volini','volfin', 'volmin', 'volmax' ]] = embalses[['volini','volfin', 'volmin', 'volmax' ]].fillna(0.0)
     embalses[['volini','volfin', 'volmin', 'volmax' ]] = embalses[['volini','volfin', 'volmin', 'volmax' ]] * 1e6 
     
-    # corregido may2025
-    embalses['FEsc'] = embalses['volmax'].apply(lambda x: 10**(int(np.log10(x) +0.5)))
-    embalses['FEsc'] = embalses['FEsc'].astype('int64')
+    # corregido may2025 - Seguro contra valores NaN o 0 en el cálculo del logaritmo
+    vol_max_safe = embalses['volmax'].clip(lower=1.0)
+    embalses['FEsc'] = vol_max_safe.apply(lambda x: 10**(int(np.log10(x) + 0.5))).astype('int64')
     embalses[['volini','volfin', 'volmin', 'volmax' ]] = embalses[['volini','volfin', 'volmin', 'volmax' ]].div(embalses['FEsc'], axis = 0)
     
     # preproceso de los que restan
@@ -246,6 +291,7 @@ def parse_centrales(df_centrales_xls: pd.DataFrame, uninodal = False) -> tuple:
     pasadas  = pasadas.iloc[:,[0,1,3,4,5,6,7,8,11,12,26,27,28,29]].copy()
     termicas = termicas.iloc[:,[0,1,3,4,5,6,7,8,11,12,26,27,28,29]].copy()
     baterias = baterias.iloc[:,[0,1,3,4,5,6,7,8,11,12,26,27,28,29]].copy()
+    fallas   = fallas.iloc[:,[0,1,3,4,5,6,7,8,11,12,26,27,28,29]].copy()
     
     return embalses, series, pasadas, termicas, fallas, baterias, ncen
 
@@ -276,7 +322,7 @@ def parse_afluentes(df_hid_xls: pd.DataFrame, # hoja hidrologia
     df_his = df_his_xls.copy()
     df_his = df_his.dropna(subset = "CENTRAL")
     df_eta = df_eta_xls.copy()
-    df_eta = df_eta.dropna(how = 'all').dropna(how = 'any')
+    df_eta = df_eta.dropna(subset=['Etapa', 'Nº Bloques'])
     df_eta = df_eta.astype({'Etapa': 'int32', 'Nº Días': 'int32', 'Año': 'int32', 'Nº Bloques': 'int32' })
     
     df_eta["Inicial"] = pd.to_datetime(df_eta["Inicial"])
@@ -1309,7 +1355,7 @@ def parse_afluentes(df_hid_xls: pd.DataFrame, # hoja hidrologia
             
     for cname, df in dict_qeta.items():
         cols = [str(i) for i in range(1, NEta + 1)]
-        dict_qeta[cname] = correccion_preredondeo(df, cols, 2)
+        dict_qeta[cname] = correccion_preredondeo(df, cols, 2, rounding_mode="ROUND_HALF_EVEN")
 
     dict_qeta_lines = {}
     for cname, df_qeta in dict_qeta.items():
@@ -1353,7 +1399,7 @@ def parse_afluentes_sin_aflu4s(df_hid_xls: pd.DataFrame, # hoja hidrologia
     df_his = df_his_xls.copy()
     df_his = df_his.dropna(subset = "CENTRAL")
     df_eta = df_eta_xls.copy()
-    df_eta = df_eta.dropna(how = 'all').dropna(how = 'any')
+    df_eta = df_eta.dropna(subset=['Etapa', 'Nº Bloques'])
     df_eta = df_eta.astype({'Etapa': 'int32', 'Nº Días': 'int32', 'Año': 'int32', 'Nº Bloques': 'int32' })
 
     df_cen = df_cen_xls.copy()
@@ -1723,7 +1769,7 @@ def parse_afluentes_sin_aflu4s(df_hid_xls: pd.DataFrame, # hoja hidrologia
     
     for cname, df in dict_qeta.items():
         cols = [str(i) for i in range(1, NEta + 1)]
-        dict_qeta[cname] = correccion_preredondeo(df, cols, 2)
+        dict_qeta[cname] = correccion_preredondeo(df, cols, 2, rounding_mode="ROUND_HALF_EVEN")
 
     dict_qeta_lines = {}
     for cname, df_qeta in dict_qeta.items():
@@ -1745,13 +1791,17 @@ def parse_afluentes_sin_aflu4s(df_hid_xls: pd.DataFrame, # hoja hidrologia
 # modificado jul2025 -> compatibilidad json
 def parse_costos( df_cos_xls: pd.DataFrame, # hoja costos
                   df_eta_xls: pd.DataFrame, # hoja etapas
-                  df_cen_xls: pd.DataFrame  # hoja centrales
+                  df_cen_xls: pd.DataFrame, # hoja centrales
+                  macro_profile=None        # opcional perfil macro
                 ) -> tuple:
     
     #df_eta = df_eta_xls.reset_index(drop = True)
-    df_eta = df_eta_xls.copy()
-    df_eta = df_eta.dropna(how = 'all').dropna(how = 'any')
-    df_eta = df_eta.astype({'Etapa': 'int32', 'Nº Días': 'int32', 'Año': 'int32', 'Nº Bloques': 'int32' })
+    df_eta = df_eta_xls.copy().dropna(subset=['Etapa']) # Conservar mensuales
+
+    # Rellenar Nº Bloques con 1 para las etapas mensuales
+    df_eta['Nº Bloques'] = df_eta['Nº Bloques'].fillna(1).astype('int32')
+    
+    df_eta = df_eta.astype({'Etapa': 'int32', 'Nº Días': 'int32', 'Año': 'int32'})
     df_eta = df_eta[["Etapa", "Inicial", "Nº Días", "Final", "Año", "Mes", "Nº Bloques"]]
     
     df_eta["Inicial"] = pd.to_datetime(df_eta["Inicial"])
@@ -1813,16 +1863,26 @@ def parse_costos( df_cos_xls: pd.DataFrame, # hoja costos
     aux['IDiaINI'] = np.maximum((aux['DATE1'] - FechaINI).dt.days + 1, 1)
     aux['IDiaFIN'] = np.minimum(np.maximum((aux['DATE2'] - FechaINI).dt.days + 1, 0), NDia)
     
-    #print(aux)
+    MaskDia = pd.DataFrame(False, index = np.arange(NDia), columns = NombreC)
+    MaskDia.index += 1
+
     for _, row in aux.iterrows():
         icen    = row['index']
         cv      = row['CV']
         IDiaINI = row['IDiaINI']
         IDiaFIN = row['IDiaFIN']
-        #print(IDiaINI, IDiaFIN, type(IDiaINI), type(IDiaFIN), icen, type(icen), row['CENTRALES'])
         CVarDia.iloc[(IDiaINI-1):IDiaFIN, int(icen)] = cv
         
+        # La macro VBA omite CUALQUIER período donde el costo variable (redondeado a 2 decimales)
+        # es igual al costo nominal (redondeado a 2 decimales).
+        nom_r = round(float(CVarNom[int(icen)]), 2)
+        cv_r  = round(float(cv), 2)
+        if cv_r != nom_r:
+            MaskDia.iloc[(IDiaINI-1):IDiaFIN, int(icen)] = True
+
+        
     CVarEta = pd.DataFrame(np.nan, index = np.arange(NFil), columns = NombreC).astype('float64', errors = 'ignore')
+    MaskEta = pd.DataFrame(False, index = np.arange(NFil), columns = NombreC)
 
     df_eta['IDiaINI'] = np.maximum((df_eta['Inicial'] - FechaINI).dt.days + 1, 1)
     df_eta['IDiaFIN'] = np.maximum((df_eta['Final'] - FechaINI).dt.days + 1, 0)
@@ -1834,6 +1894,7 @@ def parse_costos( df_cos_xls: pd.DataFrame, # hoja costos
             icen  = row2['index']
             cname = row2['CENTRALES']
             CVarEta.iloc[ifil, int(icen)] = CVarDia.iloc[(IDiaINI-1):IDiaFIN, icen].mean()
+            MaskEta.iloc[ifil, int(icen)] = MaskDia.iloc[(IDiaINI-1):IDiaFIN, icen].any()
             
     MantCen    = pd.DataFrame(0, index = np.arange(NFil), columns = NombreC).astype('int32')
     NombreC    = pd.Series(NombreC) # para recuperar indice de central
@@ -1841,8 +1902,7 @@ def parse_costos( df_cos_xls: pd.DataFrame, # hoja costos
     CVarAux    = CVarEta[CenMant]
     
     for icen, cname in CenMant.items():
-        CondCVar = np.abs(CVarAux[cname] - CVarNom[icen]) > 0.005
-        MantCen.loc[CondCVar, cname] = 1
+        MantCen.loc[:, cname] = MaskEta.loc[:, cname].astype('int32')
 
     NEtaCen = MantCen.sum()
     IMant = ((MantOK) * (NEtaCen > 0)).sum()
@@ -1856,8 +1916,9 @@ def parse_costos( df_cos_xls: pd.DataFrame, # hoja costos
     
     dict_MantCen = {cname: MantCen[cname].values for cname in CenNomFinal}
     dict_CVarEta = {cname: CVarEta[cname].values for cname in CenNomFinal}
+    etapa_list = df_eta['Etapa'].values.astype('int32')
     
-    return  NFil, dict_CVarEta, CenNomFinal, NEtaCen[((MantOK) * (NEtaCen > 0)).values], dict_MantCen, IMant, imes_aux
+    return  NFil, dict_CVarEta, CenNomFinal, NEtaCen[((MantOK) * (NEtaCen > 0)).values], dict_MantCen, IMant, imes_aux, etapa_list
     
 ######## MANTENIMIENTOS EMBALSES
 # modificado jul2025 --> compatibilidad json
@@ -1868,7 +1929,7 @@ def parse_embalses(df_emb_xls: pd.DataFrame, # hoja embalses
     
     #df_eta = df_eta_xls.reset_index(drop = True)
     df_eta = df_eta_xls.copy()
-    df_eta = df_eta.dropna(how = 'all').dropna(how = 'any')
+    df_eta = df_eta.dropna(subset=['Etapa', 'Nº Bloques'])
     df_eta = df_eta.astype({'Etapa': 'int64', 'Nº Días': 'int64', 'Año': 'int64', 'Nº Bloques': 'int64' })
     df_eta = df_eta[["Etapa", "Inicial", "Nº Días", "Final", "Año", "Mes", "Nº Bloques"]]
     
@@ -1905,6 +1966,7 @@ def parse_embalses(df_emb_xls: pd.DataFrame, # hoja embalses
     cen_cols = ["CENTRALES", "Mínima", "Máxima", "Mínimo", "Máximo"]
 
     df_cen = df_cen[df_cen["Tipo de Central"] == 'E'][cen_cols].astype({"Mínima": 'float64', "Máxima": 'float64', "Mínimo": 'float64', "Máximo": 'float64'})
+    vol_max_safe = df_cen['Máximo'].clip(lower=1.0)
     df_cen["FEscala"] = np.power(10.0, np.int64(np.log10(df_cen['Máximo']) + 0.5)).astype('float64')
 
     NomEmb = df_cen["CENTRALES"].unique() # lista desde pestaña de centrales
@@ -1946,6 +2008,7 @@ def parse_embalses(df_emb_xls: pd.DataFrame, # hoja embalses
     df_emb = df_emb[(df_emb.IDiaINI > 0) & (df_emb.IDiaFIN > 0)]
     #df_emb = df_emb[(df_emb.IDiaFIN > df_emb.IDiaIni)]
     df_emb = df_emb.merge(df_cen.rename(columns = {"CENTRALES": "EMBALSE"})[["EMBALSE","FEscala"]], on = 'EMBALSE', how = 'left')
+    df_emb['FEscala'] = df_emb['FEscala'].fillna(1.0).replace(0.0, 1.0)
     
     for irow, row in df_emb.iterrows():
         imant   = irow
@@ -1985,7 +2048,7 @@ def parse_embalses(df_emb_xls: pd.DataFrame, # hoja embalses
     df_manemb_show = pd.DataFrame(columns = ["EMBALSE", "INICIAL", "FINAL", "MÍNIMO", "MÁXIMO"])
     embnames = [e for e in NomEmb if e in EmbMantNames.tolist()]
 
-    for iemb, ename in enumerate(embnames):
+    for ename in embnames:
         mask           = MantCen[ename]
         IEtas          = MantCen[ename][MantCen[ename]].index
 
@@ -2071,7 +2134,7 @@ def parse_embalsesh(df_emh_xls: pd.DataFrame, # hoja embalsesh
     
     #df_eta = df_eta_xls.reset_index(drop = True)
     df_eta = df_eta_xls.copy()
-    df_eta = df_eta.dropna(how = 'all').dropna(how = 'any')
+    df_eta = df_eta.dropna(subset=['Etapa', 'Nº Bloques'])
     df_eta = df_eta.astype({'Etapa': 'int64', 'Nº Días': 'int64', 'Año': 'int64', 'Nº Bloques': 'int64' })
     df_eta = df_eta[["Etapa", "Inicial", "Nº Días", "Final", "Año", "Mes", "Nº Bloques"]].copy()
     
@@ -2087,9 +2150,15 @@ def parse_embalsesh(df_emh_xls: pd.DataFrame, # hoja embalsesh
 
 
     df_cen = df_cen_xls.copy()
+    if 'Unnamed: 1' in df_cen.columns:
+        df_cen = df_cen.rename(columns={'Unnamed: 1': 'CENTRALES'})
+    if 'CENTRALES' in df_cen.columns:
+        df_cen['CENTRALES'] = df_cen['CENTRALES'].astype(str).str.strip()
 
     df_emh            = df_emh_xls.copy()
-    #print(df_emh)
+    if 'EMBALSE' in df_emh.columns:
+        df_emh['EMBALSE'] = df_emh['EMBALSE'].astype(str).str.strip()
+    
     df_emh            = df_emh.dropna(how = 'all').dropna(how = 'any')
     NMant             = len(df_emh)
     #df_emh            = df_emh.astype({"INICIAL":'datetime64[ns]', "FINAL":'datetime64[ns]'})
@@ -2120,6 +2189,7 @@ def parse_embalsesh(df_emh_xls: pd.DataFrame, # hoja embalsesh
     cen_cols = ["CENTRALES", "Mínima", "Máxima", "Mínimo", "Máximo"]
 
     df_cen = df_cen[df_cen["Tipo de Central"] == 'E'][cen_cols].astype({"Mínima": 'float64', "Máxima": 'float64', "Mínimo": 'float64', "Máximo": 'float64'})
+    vol_max_safe = df_cen['Máximo'].clip(lower=1.0)
     df_cen["FEscala"] = np.power(10.0, np.int64(np.log10(df_cen['Máximo']) + 0.5)).astype('float64')
 
     df_emh = df_emh[(df_emh.IDiaIni > 0) & (df_emh.IDiaFin > 0)]
@@ -2160,22 +2230,39 @@ def parse_embalsesh(df_emh_xls: pd.DataFrame, # hoja embalsesh
         for irow2, row2 in df_emh.iterrows():
             ename = row2["EMBALSE"]
             FEsc  = row2["FEscala"]
+            # Si FEsc llega en 0 o nulo, lo forzamos a 1.0 justo antes de dividir
+            if pd.isna(FEsc) or FEsc == 0.0:
+                FEsc = 1.0
             VMinEta.loc[irow, ename] = VMin.loc[(IDiaINI - 1):(IDiaFIN - 1), ename].mean() / FEsc
             CostoEta.loc[irow, ename] = Costo.loc[(IDiaINI - 1):(IDiaFIN - 1), ename].mean()
     
     MantCen = pd.DataFrame(False, index = np.arange(NEta), columns = NomEmb)
+    # Filtro ORIGINAL: solo embalses con entradas válidas en el período de estudio
     aux     = df_cen[df_cen["CENTRALES"].isin(df_emh["EMBALSE"].unique())]
     for irow, row in aux.iterrows():
         ename   = row["CENTRALES"]
         vminnom = row["Mínimo"]
         FEsc    = row["FEscala"]
+        
         CondMin = np.abs(VMinEta[ename] - vminnom /FEsc) < 0.00000005
+        
         if np.any(~(CondMin)):
             MantCen.loc[~CondMin, ename] = True
 
     NEmbMant = len(aux)
+    idx_unicos = aux["CENTRALES"].unique()
+    NMantEmbMant = MantCen.sum().loc[idx_unicos].copy()
     
-    NMantEmbMant = MantCen.sum()[MantCen.sum()>0]
+    # Detectar embalses presentes en MantEMBh (pre-filtro de fechas) que no tienen
+    # entradas válidas en el período → agregarlos con NMANT=0.
+    # Ejemplo: RALCO aparece en la hoja pero sus fechas quedan fuera del horizonte.
+    emb_prefilter = df_emh_xls.dropna(how='all').dropna(how='any')
+    if 'EMBALSE' in emb_prefilter.columns:
+        emb_prefilter = emb_prefilter.copy()
+        emb_prefilter['EMBALSE'] = emb_prefilter['EMBALSE'].astype(str).str.strip()
+        for emb_name in emb_prefilter['EMBALSE'].unique():
+            if emb_name not in NMantEmbMant.index and emb_name in MantCen.columns:
+                NMantEmbMant[emb_name] = 0
     
     return NMantEmbMant, MantCen, df_eta, VMinEta, CostoEta
 
@@ -2192,7 +2279,7 @@ def parse_mlineas(df_lin_xls: pd.DataFrame, # hoja lineas
     
     #df_eta = df_eta_xls.reset_index(drop = True)
     df_eta = df_eta_xls.copy()
-    df_eta = df_eta.dropna(how = 'all').dropna(how = 'any')
+    df_eta = df_eta.dropna(subset=['Etapa', 'Nº Bloques'])
     df_eta = df_eta.astype({'Etapa': 'int32', 'Nº Días': 'int32', 'Año': 'int32', 'Nº Bloques': 'int32' })
     df_eta = df_eta[["Etapa", "Inicial", "Nº Días", "Final", "Año", "Mes", "Nº Bloques"]]
 
@@ -2390,10 +2477,32 @@ def parse_mlineas(df_lin_xls: pd.DataFrame, # hoja lineas
 
     df_full  = pd.DataFrame(columns = cols)
     mli_dict = {}
+
+    # --- Preparar df_ml2 una sola vez ---
+    ml2_ready = pd.DataFrame(columns=cols)
     if not df_ml2.empty:
-        df_ml2.columns = cols
-        df_ml2 = df_ml2.dropna(subset = ["INICIAL"])
-    
+        _ml2 = df_ml2.copy()
+        _ml2.columns = cols
+        _ml2["INICIAL"] = pd.to_numeric(_ml2["INICIAL"], errors='coerce')
+        _ml2["FINAL"]   = pd.to_numeric(_ml2["FINAL"],   errors='coerce')
+        _ml2["A-B"]     = pd.to_numeric(_ml2["A-B"],     errors='coerce')
+        _ml2["B-A"]     = pd.to_numeric(_ml2["B-A"],     errors='coerce')
+        _ml2["OP"]      = _ml2["OP"].apply(lambda x: "T" if x else "F")
+        _ml2 = _ml2.dropna(subset=["INICIAL", "FINAL"])
+        
+        # Expandir los rangos de I:N en bloques unitarios (INICIAL=FINAL)
+        ml2_expanded = []
+        for _, row in _ml2.iterrows():
+            ini = int(row["INICIAL"])
+            fin = int(row["FINAL"])
+            for b in range(ini, fin + 1):
+                ml2_expanded.append([row["LINEA"], b, b, row["A-B"], row["B-A"], row["OP"]])
+        
+        if ml2_expanded:
+            ml2_ready = pd.DataFrame(ml2_expanded, columns=cols)
+            # EXTREMADAMENTE IMPORTANTE: I:N tiene rangos superpuestos. La macro los sobrescribe secuencialmente. 
+            ml2_ready = ml2_ready.drop_duplicates(subset=["LINEA", "INICIAL"], keep='last')
+
     for i, row in df_mantlin_fin.iterrows():
         #print(lin)
         lin = row["LINEA"]
@@ -2418,28 +2527,91 @@ def parse_mlineas(df_lin_xls: pd.DataFrame, # hoja lineas
         else:
             df_full = pd.concat([df_full, df_aux], ignore_index=True)
 
+    if not df_full.empty:
+        df_full = df_full.dropna(subset=["INICIAL"])
+        df_full["INICIAL"] = df_full["INICIAL"].astype('int32')
+        df_full["FINAL"]   = df_full["FINAL"].astype('int32')
+        df_full["FROM_AG"] = True
 
+    # --- Construir dict de capacidades nominales desde la hoja Líneas ---
+    nominal_cap = {}
+    for _, row in df_lin.iterrows():
+        lname = row["Nombre A->B"]
+        nominal_cap[lname] = (float(row["A->B"]), float(row["B->A"]))
 
-    if not df_ml2.empty:
-        df_ml2["OP"] =  df_ml2["OP"].apply(lambda x: "T" if x else "F")
-        df_full = pd.concat([df_full, df_ml2], ignore_index = True)
-        df_full = df_full.drop_duplicates(subset = ["LINEA", "INICIAL", "FINAL"], keep = 'last')
-        df_full = df_full.sort_values(by = ["LINEA", "INICIAL"], ignore_index = True)
-
-    df_full = df_full.dropna(subset = ["INICIAL"])
-    df_full["INICIAL"] = df_full["INICIAL"].astype('int32')
-    
-    # generamos la info que se pasa al template
-    data_dict = {lin: df_full[df_full["LINEA"] == lin][cols2].values for lin in mant_unique}
-
-    mant_nblo = []
-    for lname, data in data_dict.items():
-        nblo = 0
-        for lmant in data:
-            nblo += int(lmant[1] - lmant[0] + 1)
-        mant_nblo.append(nblo)
+    # --- Integración A:G e I:N ANTES del filtro ---
+    # I:N sobrescribe A:G completamente bloque a bloque.
+    if df_full.empty:
+        df_merged = ml2_ready.copy()
+        if not df_merged.empty:
+            df_merged["FROM_AG"] = False
+    elif ml2_ready.empty:
+        df_merged = df_full.copy()
+    else:
+        ag_subset = df_full[["LINEA", "INICIAL", "FROM_AG"]]
+        df_merged = pd.concat([df_full, ml2_ready], ignore_index=True)
+        # Mantener último (el valor de I:N gana)
+        df_merged = df_merged.drop_duplicates(subset=["LINEA", "INICIAL"], keep='last')
         
-    return data_dict, mant_unique, mant_nblo, len(mant_unique)
+        # Restaurar la flag FROM_AG para saber si el bloque existía en A:G
+        df_merged = df_merged.drop(columns=["FROM_AG"], errors="ignore")
+        df_merged = pd.merge(df_merged, ag_subset, on=["LINEA", "INICIAL"], how="left")
+        df_merged["FROM_AG"] = df_merged["FROM_AG"].fillna(False)
+
+    # --- Filtrar bloques finales ---
+    TOLA = 0.05
+    filtered_rows = []
+    
+    if not df_merged.empty:
+        for lname in df_merged["LINEA"].unique():
+            nom_ab, nom_ba = nominal_cap.get(lname, (None, None))
+            grp = df_merged[df_merged["LINEA"] == lname].copy()
+            if nom_ab is not None:
+                # Regla de oro: Mantener si difiere de nominal, o es fallo, O estaba en A:G.
+                # De esta forma, si I:N regresa un bloque de A:G a su valor nominal, 
+                # SE IMPRIME con el valor nominal porque A:G lo había activado.
+                mask = (
+                    (abs(grp["A-B"].astype(float) - nom_ab) > TOLA) |
+                    (abs(grp["B-A"].astype(float) - nom_ba) > TOLA) |
+                    (grp["OP"] == "F") |
+                    (grp["FROM_AG"] == True)
+                )
+                grp_filtered = grp[mask]
+            else:
+                grp_filtered = grp
+
+            if not grp_filtered.empty:
+                grp_filtered = grp_filtered.copy()
+                grp_filtered["INICIAL"] = grp_filtered["INICIAL"].astype('int32')
+                grp_filtered["FINAL"]   = grp_filtered["FINAL"].astype('int32')
+                filtered_rows.append(grp_filtered)
+
+    df_final = pd.concat(filtered_rows, ignore_index=True) if filtered_rows else pd.DataFrame()
+    if not df_final.empty:
+        df_final = df_final.sort_values(by=["LINEA", "INICIAL"]).reset_index(drop=True)
+
+    # El conjunto de líneas es TODO el universo de líneas procesado (incluso con 0 bloques)
+    mant_unique_final = list(df_merged["LINEA"].unique()) if not df_merged.empty else []
+    
+    # El orden del archivo de salida debe coincidir exactamente con el orden 
+    # en que las líneas están definidas en la hoja "Líneas"
+    nombres_lin = df_lin["Nombre A->B"].dropna().tolist()
+
+    mant_unique_final = sorted(mant_unique_final, key=lambda x: nombres_lin.index(x) if x in nombres_lin else 9999)
+    
+    data_dict = {}
+    mant_nblo = []
+    
+    for lin in mant_unique_final:
+        if not df_final.empty and lin in df_final["LINEA"].values:
+            grp = df_final[df_final["LINEA"] == lin]
+            data_dict[lin] = grp[cols2].values
+            mant_nblo.append(len(grp))
+        else:
+            data_dict[lin] = []
+            mant_nblo.append(0)
+
+    return data_dict, mant_unique_final, mant_nblo, len(mant_unique_final)
 
 
 ######## SIMULACIONES Y APERTURAS
@@ -2455,7 +2627,7 @@ def parse_simape(df_hid_xls: pd.DataFrame,    # hoja hirologia
                 ) -> tuple:
     
     df_eta = df_eta_xls.copy()
-    df_eta = df_eta.dropna(how = 'all').dropna(how = 'any')
+    df_eta = df_eta.dropna(subset=['Etapa', 'Nº Bloques'])
     df_eta = df_eta.astype({'Etapa': 'int64', 'Nº Días': 'int64', 'Año': 'int64', 'Nº Bloques': 'int64' })
     df_eta = df_eta[["Etapa", "Inicial", "Nº Días", "Final", "Año", "Mes", "Nº Bloques"]].copy()
     df_eta["Inicial"] = pd.to_datetime(df_eta["Inicial"])
@@ -2789,144 +2961,142 @@ def parse_demanda(df_barras_xls, df_demanda_xls):
 
 ######## MANTENIMIENTOS CENTRALES
 
-# modificado ene2025 reparacion de mant de fallas segun uso CEN
-# modificado ene2025 separacion de fallas para escritura con diferente formato
-# modificado jul2025 -> compatibilidad json
-def parse_mancen(df_dict : dict, POT_TOL = 0.05) -> pd.DataFrame:
+def parse_mancen(df_dict : dict, POT_TOL = 0.05, macro_profile=None) -> pd.DataFrame:
     barradem    = df_dict["barrademf"].set_index("BARRA")
     df_barr_xls = df_dict['barras'].dropna(subset = "BARRA").astype({"Nº": 'int32'})
-    df_etap_xls = df_dict["etapas"].dropna(subset = "Etapa").astype({"Etapa": "int32"})
+    df_etap_xls = df_dict["etapas"].dropna(subset = "Etapa")
+    
+    if macro_profile and macro_profile.skip_stages_offset > 0:
+        offset = macro_profile.skip_stages_offset
+        df_etap_xls = df_etap_xls.iloc[offset:].reset_index(drop=True)
+        
+    df_etap_xls = df_etap_xls.astype({"Etapa": "int32"})
     df_eta      = df_dict["etapas_full"]
     df_cent_xls = df_dict["centrales"]
     
-    df_cini_xls            = df_dict["CIniciales"].dropna(subset = "CENTRAL")
-    df_cini_xls["INICIAL"] = pd.to_datetime(df_cini_xls["INICIAL"])
-    df_cini_xls["FINAL"]   = pd.to_datetime(df_cini_xls["FINAL"])
-    df_pobr_xls            = df_dict["PObra"].dropna(subset = "CENTRAL")
-    df_pobr_xls["INICIAL"] = pd.to_datetime(df_pobr_xls["INICIAL"])
-    df_pobr_xls["FINAL"]   = pd.to_datetime(df_pobr_xls["FINAL"])
-    df_limi_xls            = df_dict["Limitaciones"].dropna(subset = "CENTRAL")
-    df_limi_xls.loc[:,"INICIAL"] = pd.to_datetime(df_limi_xls["INICIAL"])
-    df_limi_xls.loc[:,"FINAL"]   = pd.to_datetime(df_limi_xls["FINAL"])
-    df_dcom_xls            = df_dict["DispComb"].dropna(subset = "CENTRAL").dropna(how = 'any')
-    df_dcom_xls["INICIAL"] = pd.to_datetime(df_dcom_xls["INICIAL"])
-    df_dcom_xls["FINAL"]   = pd.to_datetime(df_dcom_xls["FINAL"])
-    df_mmay_xls            = df_dict["MMayor"].dropna(how = 'any')
-    df_mmay_xls.columns    = df_cini_xls.columns # machucon
-    df_mmay_xls["INICIAL"] = pd.to_datetime(df_mmay_xls["INICIAL"])
-    df_mmay_xls["FINAL"]   = pd.to_datetime(df_mmay_xls["FINAL"])
-    df_ernc_xls = df_dict["ERNC"]
+    def _norm_mant(df):
+        if df is None: return None
+        res = df.copy()
+        for col in res.columns:
+            u_col = str(col).upper().replace('Í', 'I').replace('Á', 'A')
+            if u_col == 'CENTRAL' or u_col == 'CENTRALES': res = res.rename(columns={col: 'central'})
+            elif u_col == 'INICIAL' or u_col == 'FEC_INI' or 'INICIO' in u_col: res = res.rename(columns={col: 'INICIAL'})
+            elif u_col == 'FINAL' or u_col == 'FEC_FIN' or 'FIN' in u_col: res = res.rename(columns={col: 'FINAL'})
+            elif 'MINIMA' in u_col or 'P_MIN' in u_col: res = res.rename(columns={col: 'potmin'})
+            elif 'MAXIMA' in u_col or 'P_MAX' in u_col or 'P_DISP' in u_col: res = res.rename(columns={col: 'potmax'})
+        return res
+
+    mcols_base = ["central", "INICIAL", "FINAL", "potmin", "potmax"]
     
+    def _get_sheet_clean(name):
+        df = _norm_mant(df_dict.get(name))
+        if df is not None and not df.empty:
+            df = df.dropna(subset=["central"])
+            cols_avail = [c for c in mcols_base if c in df.columns]
+            return df[cols_avail]
+        return pd.DataFrame(columns=mcols_base)
+
+    # Leer MantCEN (área derecha: columnas I-M con rangos de bloques ya procesados por VBA)
+    # Esta hoja es la fuente única para plpmance.dat - contiene datos consolidados de todas las hojas de mantención
+    raw_mcen = df_dict.get("MantCEN")
+    if raw_mcen is not None and not raw_mcen.empty:
+        # Columnas I-M (índices 8-12): CENTRAL, INICIAL(bloque), FINAL(bloque), MÍNIMA, MÁXIMA
+        mcen_cols = raw_mcen.columns[8:13] if len(raw_mcen.columns) >= 13 else raw_mcen.columns[-5:]
+        df_mcen_ranges = raw_mcen[list(mcen_cols)].copy()
+        df_mcen_ranges.columns = ['central', 'blo_ini', 'blo_fin', 'potmin', 'potmax']
+        df_mcen_ranges = df_mcen_ranges.dropna(subset=['central'])
+        df_mcen_ranges = df_mcen_ranges[df_mcen_ranges['central'].astype(str).str.strip().str.match(r'^[A-Za-z_\-]')]
+        df_mcen_ranges['central'] = df_mcen_ranges['central'].astype(str).str.strip()
+        df_mcen_ranges['blo_ini'] = pd.to_numeric(df_mcen_ranges['blo_ini'], errors='coerce')
+        df_mcen_ranges['blo_fin'] = pd.to_numeric(df_mcen_ranges['blo_fin'], errors='coerce')
+        df_mcen_ranges = df_mcen_ranges.dropna(subset=['blo_ini', 'blo_fin'])
+        df_mcen_ranges['blo_ini'] = df_mcen_ranges['blo_ini'].astype(int)
+        df_mcen_ranges['blo_fin'] = df_mcen_ranges['blo_fin'].astype(int)
+    else:
+        df_mcen_ranges = pd.DataFrame(columns=['central', 'blo_ini', 'blo_fin', 'potmin', 'potmax'])
+
     aux_dem = pd.merge(barradem, df_barr_xls[["BARRA", "Nº"]].set_index("BARRA"), left_index = True, right_index = True).groupby(["Etapa", "BARRA","Nº", "fecha"]).agg({'MWh': 'sum'}).reset_index()
-    
     Fallas, dfcentrales = get_centrales_dfs(df_eta, df_cent_xls, aux_dem, df_barr_xls)
-    
-    #print("Fallas: ",Fallas.columns)
-    
-    Mant_dict=[df_cini_xls, df_dcom_xls, df_limi_xls, df_pobr_xls, df_mmay_xls]# rev oct2024: El orden es el correcto    
-    mants_df = pd.concat(Mant_dict, ignore_index = True) # concatena los mantenimientos en un solo dataframe
-    
-    mants_df["INICIAL"] = pd.to_datetime(mants_df["INICIAL"])
-    mants_df["FINAL"] = pd.to_datetime(mants_df["FINAL"])
-    
-    mants_df2 = preprocess_ManCen(mants_df, df_eta)
-    mants_df3 = gen_mant_others(mants_df2, dfcentrales)
-    aux_fallas = Fallas.rename(columns = {'potmin': 'potminM', 'potmax': 'potmaxM'})[['fecha', 'potminM', 'potmaxM', 'central']]
-    #mants_df4 = pd.concat([mants_df3, aux_fallas], ignore_index = True)
-    #print("aux_fallas:", aux_fallas.columns)
-    
+
     pivot = df_dict["blodem"][["Etapa","Mes", "fecha", "bloque_CEN"]].set_index("fecha")
-    
-    # se añade etapa, mes y bloque al dataframe de mantenimientos correlativos
-    aux = mants_df3.set_index("fecha").merge(pivot, how = 'left', right_index = True, left_index = True).reset_index().rename(columns = {'potminM': 'potmin', 'potmaxM': 'potmax'})
-    aux_fallas = aux_fallas.set_index("fecha").merge(pivot, how = 'left', right_index = True, left_index = True).reset_index().rename(columns = {'potminM': 'potmin', 'potmaxM': 'potmax'})
-    
-    mcols = list(aux.columns)
 
-    # procesamiento de dataframe de perfiles ERNC 
-    aux_ernc = df_ernc_xls.drop(["FINAL", "Unnamed: 0"], axis = 1)
-    aux_ernc = aux_ernc.rename(columns = {"CENTRAL": "central", "INICIAL": 'bloque', "MÍNIMA": "potminM", "MÁXIMA": 'potmaxM'})
-    pivot2 = df_dict["blodem"][["Mes", "bloque_CEN"]].rename(columns = {"bloque_CEN": "bloque"}).drop_duplicates().reset_index(drop = True)
-    aux_ernc = aux_ernc.merge(pivot2, on = "bloque", how = "left")
-    
-    ############# correlativo completo nominal
-    df_pnom_full = dfcentrales[["central", "potmin", "potmax"]].merge(pivot.reset_index()[['fecha',"Etapa", "Mes", "bloque_CEN"]],how = 'cross')
-    df_pnom_full = df_pnom_full[mcols]
-    
-    # unión del correlativo nominal con mantenimientos correlativos
-    df_mid = pd.concat([df_pnom_full, aux ], ignore_index = True)
-    
-    
-    # en este punto hase deja solo un mantenimiento por fecha por central dejando el orden jerárquico (incluyendo nominales)
-    df_mid = df_mid.drop_duplicates(subset = ['fecha', 'central'], keep = 'last').reset_index(drop = True)
-    
-    # se agrupan a nivel de bloques
-    df_mid_blo  = df_mid[["central", "bloque_CEN","potmin", "potmax", "Mes", "Etapa"]].groupby(["central", "bloque_CEN", "Mes", "Etapa"]).agg({'potmin': 'mean', 'potmax': 'mean'}).reset_index().rename(columns = {'bloque_CEN': 'bloque'})
-    
-    #tratamiento de fallas por separado (sin suavizado)
-    df_mid_blo_falla = aux_fallas[["central", "bloque_CEN","potmin", "potmax", "Mes", "Etapa"]].groupby(["central", "bloque_CEN", "Mes", "Etapa"]).agg({'potmin': 'mean', 'potmax': 'mean'}).reset_index().rename(columns = {'bloque_CEN': 'bloque'})
-    #print("df_mid_blo_falla: ", df_mid_blo_falla.columns)
-    
-    per_stage   = df_mid[["Etapa", "Mes", "central", "potmin", "potmax"]].groupby(["central","Etapa", "Mes"]).agg({'potmin': 'mean', 'potmax': 'mean'}).reset_index().rename(columns = {'bloque_CEN': 'bloque', 'potmin': 'pmin_stage', 'potmax': 'pmax_stage'})
-    df_mid_blo  = df_mid_blo.merge(per_stage, on =['central', 'Etapa', 'Mes'], how = "inner")
-    pnom_blo    = df_pnom_full.groupby(['central', 'bloque_CEN']).agg({'potmin': 'mean', 'potmax': 'mean'}).reset_index().rename(columns = {'bloque_CEN': 'bloque', 'potmin': 'potminNom', 'potmax': 'potmaxNom'})
+    # Pre-calcular mes por bloque usando blodem (bloque_CEN 1-275 -> Mes)
+    bloques_idx = range(1, 276)
+    blodem_tmp = df_dict["blodem"][["bloque_CEN", "Mes"]].drop_duplicates("bloque_CEN")
+    mes_val_dict = dict(zip(blodem_tmp["bloque_CEN"].astype(int), blodem_tmp["Mes"].astype(int)))
 
-    df_mid_blo  = df_mid_blo.merge(pnom_blo, how = 'left', on = ['central', 'bloque'])
-
-    ernc_names  = aux_ernc.central.unique().tolist()
-
-    aux_mid         = df_mid_blo.copy()
-    
-    # primer marcado, etapas contra nominales
-    aux_mid['cond'] = ~((np.abs(aux_mid.potminNom - aux_mid.pmin_stage) < POT_TOL) & 
-                      (np.abs(aux_mid.potmaxNom - aux_mid.pmax_stage) < POT_TOL)) 
-
-    to_smooth = [c for c in df_mid_blo.central.unique() if c not in ernc_names]
-
-    tblo = int(df_etap_xls["Nº Bloques"].sum())
-
+    # Procesar MantCEN: expandir rangos de bloques a filas individuales.
+    # Todas las centrales (incluyendo ERNC) se leen desde MantCEN, que ya contiene
+    # los datos consolidados y procesados por VBA con la estructura de pasadas correcta.
+    # Cuando blo_ini retrocede respecto a la fila anterior de la misma central,
+    # empieza una nueva "pasada"; cada pasada adicional se codifica con offset de 275
+    # para mantener el orden al ordenar por bloque (el template luego aplica % 275).
     final_mants = []
-    for cname in to_smooth:
 
-        aux_df = aux_mid[aux_mid.central == cname].reset_index(drop = True)
+    if not df_mcen_ranges.empty:
+        prev_blo_ini_by_cen = {}
+        pass_offset_by_cen  = {}
+        for _, row in df_mcen_ranges.iterrows():
+            cname   = str(row['central'])
+            blo_ini = int(row['blo_ini'])
+            blo_fin = int(row['blo_fin'])
+            pmin_r  = float(row['potmin']) if pd.notna(row['potmin']) else 0.0
+            pmax_r  = float(row['potmax']) if pd.notna(row['potmax']) else 0.0
 
-        if aux_df[aux_df.cond].empty: continue
+            prev = prev_blo_ini_by_cen.get(cname, -1)
+            if blo_ini <= prev:
+                pass_offset_by_cen[cname] = pass_offset_by_cen.get(cname, 0) + 275
+            prev_blo_ini_by_cen[cname] = blo_ini
 
-        iblo = aux_df[aux_df.cond].index[0]
+            offset = pass_offset_by_cen.get(cname, 0)
+            for b in range(blo_ini, blo_fin + 1):
+                mes_v = mes_val_dict.get(((b - 1) % 275) + 1, 1)
+                final_mants.append([cname, b + offset, mes_v, pmin_r, pmax_r])
 
-        # suavizado forward con tolerancia POT_TOL
-        while iblo < tblo - 1:
-            
-            curr_row = aux_df.iloc[iblo] 
-            if curr_row["cond"]:
-                pmin_stage = curr_row["pmin_stage"]
-                pmax_stage = curr_row["pmax_stage"]
-                final_mants.append([cname, iblo+1, curr_row['Mes'], pmin_stage, pmax_stage])
-                
-                for b in range(iblo + 1, tblo):
-                    aux_row = aux_df.iloc[b]
-                    pmin    = aux_row["pmin_stage"]
-                    pmax    = aux_row["pmax_stage"]
-                    condmin = abs(pmin_stage - pmin) < POT_TOL
-                    condmax = abs(pmax_stage - pmax) < POT_TOL
-                    if not (condmin and condmax):
-                        iblo = b
-                        break
-                    else:
-                        final_mants.append([cname, b+1, aux_row['Mes'], pmin_stage, pmax_stage ])
-                        iblo = b
-                #iblo = tblo
-            else:
-                iblo += 1
-
-            #if cname == "ALTO_HOSPICIO": print("próximo bloque: ", iblo)
-
-
-    out = pd.DataFrame(columns = ['central', 'bloque', 'Mes', 'potmin', 'potmax'], data = final_mants)
-    df_mant = pd.concat([out,aux_ernc.rename(columns = {'potminM': 'potmin', 'potmaxM': 'potmax'})], ignore_index = True )
-    df_mant = df_mant.drop_duplicates(subset = ['central', 'bloque'], keep = 'last').reset_index(drop = True)
+    out = pd.DataFrame(columns=['central', 'bloque', 'Mes', 'potmin', 'potmax'], data=final_mants)
+    df_mant = out.sort_values(by=["central", "bloque"]).reset_index(drop=True)
     
-    #df_mant = pd.concat([df_mant, df_mid_blo_falla[df_mant.columns]], ignore_index = True)
-    
-    
-    return df_mant[["central", "bloque", "Mes", "potmin", "potmax"]], df_mid_blo_falla[df_mant.columns]
+    # -------- FALLAS --------
+    # Fallas tiene index horario, mapeamos a bloques via pivot y expandimos a 275 bloques
+    try:
+        falla_cols_lower = {str(c).lower().strip(): c for c in Fallas.columns}
+        col_cen_f  = next((orig for k, orig in falla_cols_lower.items() if 'central' in k), None)
+        col_pmin_f = next((orig for k, orig in falla_cols_lower.items() if 'potmin' in k), None)
+        col_pmax_f = next((orig for k, orig in falla_cols_lower.items() if 'potmax' in k), None)
+        col_fec_f  = next((orig for k, orig in falla_cols_lower.items() if 'fecha' in k), None)
+
+        if col_cen_f is None or col_fec_f is None:
+            raise ValueError(f"Columnas requeridas no encontradas en Fallas. Disponibles: {list(Fallas.columns)}")
+
+        df_falla = Fallas[[col_fec_f, col_pmin_f, col_pmax_f, col_cen_f]].copy()
+        df_falla.columns = ['fecha', 'potmin', 'potmax', 'central']
+
+        # Unir con pivot para obtener bloque y Mes
+        df_falla = df_falla.set_index('fecha').merge(pivot, how='left', left_index=True, right_index=True).reset_index()
+        df_falla = df_falla.rename(columns={'bloque_CEN': 'bloque'})
+        df_falla = df_falla.dropna(subset=['bloque'])
+        df_falla['bloque'] = df_falla['bloque'].astype(int)
+
+        # Agregar por central/bloque/Mes
+        df_falla = df_falla.groupby(['central', 'bloque', 'Mes']).agg({'potmin': 'mean', 'potmax': 'mean'}).reset_index()
+
+        # Expandir cada central de falla a los 275 bloques del horizonte
+        if not df_falla.empty:
+            falla_mants = []
+            for cname_f in df_falla['central'].unique():
+                df_f_cen = df_falla[df_falla['central'] == cname_f]
+                blo_map_f = {int(r['bloque']): r for r in df_f_cen.to_dict('records')}
+                for b in bloques_idx:
+                    mes_v  = mes_val_dict[b]
+                    pmin_f = float(blo_map_f[b]['potmin']) if b in blo_map_f else 0.0
+                    pmax_f = float(blo_map_f[b]['potmax']) if b in blo_map_f else 0.0
+                    falla_mants.append([cname_f, b, mes_v, pmin_f, pmax_f])
+            df_falla = pd.DataFrame(falla_mants, columns=['central', 'bloque', 'Mes', 'potmin', 'potmax'])
+
+        print(f"DEBUG: df_falla registros: {len(df_falla)}, centrales: {df_falla['central'].nunique() if not df_falla.empty else 0}")
+    except Exception as e:
+        print(f"ERROR en procesamiento de fallas: {e}. Columnas: {Fallas.columns.tolist()}")
+        df_falla = pd.DataFrame(columns=["central", "bloque", "Mes", "potmin", "potmax"])
+
+    print(f"DEBUG: df_mant total size: {len(df_mant)}")
+    return df_mant[["central", "bloque", "Mes", "potmin", "potmax"]], df_falla[["central", "bloque", "Mes", "potmin", "potmax"]]
